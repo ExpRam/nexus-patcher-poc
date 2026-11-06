@@ -21,9 +21,15 @@ RUN --mount=type=cache,target=/root/.gradle \
 
 FROM ${BASE_IMAGE} AS final
 
+USER root
+
 COPY --from=build \
     --chmod=0444 \
     /workspace/build/libs/*.jar \
     /opt/javaagent/agent.jar
 
-ENV JAVA_TOOL_OPTIONS="-javaagent:/opt/javaagent/agent.jar"
+RUN chmod -R a+rX /opt/javaagent
+
+USER 200
+
+ENV JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS} -javaagent:/opt/javaagent/agent.jar"
