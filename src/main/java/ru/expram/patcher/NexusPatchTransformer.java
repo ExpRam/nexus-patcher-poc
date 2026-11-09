@@ -1,7 +1,10 @@
 package ru.expram.patcher;
 
 import javassist.*;
+import javassist.expr.ExprEditor;
+import javassist.expr.MethodCall;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.IllegalClassFormatException;
@@ -14,15 +17,12 @@ public class NexusPatchTransformer implements ClassFileTransformer {
     private static final int EXPIRATION_YEAR = 3000;
 
     private static final String[] PACKAGES_TO_IMPORT = {
-      "com.sonatype.nexus.bootstrap.entrypoint.licensing.NexusClmFeature",
-      "com.sonatype.nexus.bootstrap.entrypoint.licensing.NexusFirewallFeature",
-      "com.sonatype.nexus.bootstrap.entrypoint.licensing.NexusProfessionalFeature",
-      "org.sonatype.licensing.feature.Feature",
-      "org.sonatype.licensing.feature.FeatureSet",
-      "org.sonatype.licensing.LicenseKey",
-      "java.util.Date"
+            "com.sonatype.nexus.bootstrap.entrypoint.licensing",
+            "com.sonatype.nexus.bootstrap.entrypoint.analytics.telemetry",
+            "org.sonatype.licensing.feature",
+            "org.sonatype.licensing",
+            "java.util"
     };
-
     private static final String LICENSE_MANAGER_CLASS = "org.sonatype.licensing.trial.internal.DefaultTrialLicenseManager";
     private static final String PATCH_METHOD = """
     public LicenseKey basePatch() {
@@ -40,6 +40,7 @@ public class NexusPatchTransformer implements ClassFileTransformer {
         fSet.addFeature((Feature)new NexusProfessionalFeature());
         fSet.addFeature((Feature)new NexusClmFeature());
         fSet.addFeature((Feature)new NexusFirewallFeature());
+        fSet.addFeature((Feature)new TelemetryOptOutFeature());
 
         key.setFeatureSet(fSet);
         return key;
@@ -52,39 +53,138 @@ public class NexusPatchTransformer implements ClassFileTransformer {
             { return this.basePatch(); }
             """;
 
+    private static final String OUTREACH_CLASS =
+            "com.sonatype.nexus.plugins.outreach.internal.events.OutreachCapabilityBooter";
+
     @Override
     public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classfileBuffer) throws IllegalClassFormatException {
-        String transformedClassName = className.replace("/", ".");
-        if(!transformedClassName.equals(LICENSE_MANAGER_CLASS)) {
+        if (className == null) {
             return null;
         }
 
-        System.out.println("Found DefaultTrialLicenseManager class.");
-        ClassPool classPool = ClassPool.getDefault();
+        String transformedClassName = className.replace("/", ".");
+        return switch (transformedClassName) {
+            case LICENSE_MANAGER_CLASS:
+                yield processLicenseManager(loader, classfileBuffer);
+            case OUTREACH_CLASS:
+                yield processOutreach(loader, classfileBuffer);
+            default:
+                yield null;
+        };
+    }
 
-        Arrays.stream(PACKAGES_TO_IMPORT).forEach(classPool::importPackage);
+
+    private byte[] processOutreach(ClassLoader loader, byte[] classfileBuffer) {
+        System.out.println("Found OutreachCapabilityBooter class.");
+
+        ClassPool classPool = new ClassPool(true);
+
+        if (loader != null) {
+            classPool.insertClassPath(new LoaderClassPath(loader));
+        }
+
+        CtClass ctClass = null;
 
         try {
-            CtClass ctClass = classPool.getCtClass(LICENSE_MANAGER_CLASS);
-            CtMethod patchMethod = CtNewMethod.make(PATCH_METHOD.formatted(
-                    findLicenseKeyProviderField(ctClass),
-                    EXPIRATION_YEAR - 1900
-            ), ctClass);
+            ctClass = classPool.makeClass(
+                    new ByteArrayInputStream(classfileBuffer)
+            );
+
+            CtMethod bootMethod = ctClass.getDeclaredMethod("boot");
+
+            boolean[] patched = {false};
+
+            bootMethod.instrument(new ExprEditor() {
+                @Override
+                public void edit(MethodCall call) throws CannotCompileException {
+                    if (call.getMethodName().equals("maybeAddCapability")
+                            && !patched[0]) {
+
+                        String invocation =
+                                "$proceed($1, $2, false, $4, $5)";
+
+                        String replacement =
+                                call.getSignature().endsWith(")V")
+                                        ? "{ " + invocation + "; }"
+                                        : "{ $_ = " + invocation + "; }";
+
+                        call.replace(replacement);
+
+                        patched[0] = true;
+
+                        System.out.println("Outreach capability patched.");
+                    }
+                }
+            });
+
+            if (!patched[0]) {
+                throw new IllegalStateException(
+                        "maybeAddCapability invocation not found"
+                );
+            }
+
+            return ctClass.toBytecode();
+
+        } catch (Exception e) {
+            System.out.println("Something went wrong...");
+            e.printStackTrace();
+            throw new RuntimeException(e);
+        } finally {
+            if (ctClass != null) {
+                ctClass.detach();
+            }
+        }
+    }
+
+
+    private byte[] processLicenseManager(
+            ClassLoader loader,
+            byte[] classfileBuffer
+    ) {
+        System.out.println("Found DefaultTrialLicenseManager class.");
+
+        ClassPool classPool = new ClassPool(true);
+
+        if (loader != null) {
+            classPool.insertClassPath(new LoaderClassPath(loader));
+        }
+
+        Arrays.stream(PACKAGES_TO_IMPORT)
+                .forEach(classPool::importPackage);
+
+        CtClass ctClass = null;
+
+        try {
+            ctClass = classPool.makeClass(
+                    new ByteArrayInputStream(classfileBuffer)
+            );
+
+            CtMethod patchMethod = CtNewMethod.make(
+                    PATCH_METHOD.formatted(
+                            findLicenseKeyProviderField(ctClass),
+                            EXPIRATION_YEAR - 1900
+                    ),
+                    ctClass
+            );
+
             ctClass.addMethod(patchMethod);
 
             replaceLicenseMethods(classPool, ctClass);
 
-            byte[] code = ctClass.toBytecode();
-            ctClass.detach();
+            return ctClass.toBytecode();
 
-            return code;
         } catch (NotFoundException | CannotCompileException | IOException e) {
             System.out.println("Something went wrong...");
             e.printStackTrace();
             throw new RuntimeException(e);
-        }
 
+        } finally {
+            if (ctClass != null) {
+                ctClass.detach();
+            }
+        }
     }
+
 
     private String findLicenseKeyProviderField(CtClass ctClass)
             throws NotFoundException {

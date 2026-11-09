@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=sonatype/nexus3:latest
+ARG BASE_IMAGE=sonatype/nexus3:3.98.1
 ARG JAVA_VERSION=21
 
 FROM eclipse-temurin:${JAVA_VERSION}-jdk-noble AS build
