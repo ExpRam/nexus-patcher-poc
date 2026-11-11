@@ -14,11 +14,18 @@ import java.util.Map;
 
 public class NexusPatchTransformer implements ClassFileTransformer {
 
-    private static final String TRIAL_LICENSE_MANAGER_CLASS = "org.sonatype.licensing.trial.internal.DefaultTrialLicenseManager";
-    private static final String OUTREACH_CLASS = "com.sonatype.nexus.plugins.outreach.internal.events.OutreachCapabilityBooter";
-    private static final String USER_AGENT_CLASS = "org.sonatype.nexus.utils.httpclient.UserAgentGenerator";
-    private static final String NEXUS_LICENSE_MANAGER_CLASS = "com.sonatype.nexus.licensing.ext.bootstrap.internal.NexusLicenseManager";
-    private static final String LICENSE_SERVICE_CLASS = "com.sonatype.nexus.plugins.healthcheck.pro.internal.LicenseServiceImpl";
+    private static final String TRIAL_LICENSE_MANAGER_CLASS =
+            "org.sonatype.licensing.trial.internal.DefaultTrialLicenseManager";
+    private static final String OUTREACH_CLASS =
+            "com.sonatype.nexus.plugins.outreach.internal.events.OutreachCapabilityBooter";
+    private static final String USER_AGENT_CLASS =
+            "org.sonatype.nexus.utils.httpclient.UserAgentGenerator";
+    private static final String NEXUS_LICENSE_MANAGER_CLASS =
+            "com.sonatype.nexus.licensing.ext.bootstrap.internal.NexusLicenseManager";
+    private static final String LICENSE_SERVICE_CLASS =
+            "com.sonatype.nexus.plugins.healthcheck.pro.internal.LicenseServiceImpl";
+    private static final String EULA_SERVICE_CLASS =
+            "com.sonatype.nexus.plugins.healthcheck.service.impl.EulaServiceImpl";
 
     private final Map<String, Patch> patches = new HashMap<>();
 
@@ -34,6 +41,7 @@ public class NexusPatchTransformer implements ClassFileTransformer {
         patches.put(USER_AGENT_CLASS, new UserAgentGenerator());
         patches.put(NEXUS_LICENSE_MANAGER_CLASS, new NexusLicenseManager());
         patches.put(LICENSE_SERVICE_CLASS, new LicenseService());
+        patches.put(EULA_SERVICE_CLASS, new HealthCheckEula());
 
         return process(transformedClassName, loader, classfileBuffer);
     }
