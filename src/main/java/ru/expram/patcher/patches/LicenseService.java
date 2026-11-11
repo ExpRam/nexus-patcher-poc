@@ -13,6 +13,8 @@ public class LicenseService implements Patch {
 
         getLicenseId.setBody("{ return null; }");
 
+        // Disables pro for rhc
+        // No difference between regular rhc and pro: pro endpoints validates X-CLM-Token from header on sonatype`s back so pro endpoints are useless in this case
         CtMethod getLicenseKey =
                 ctClass.getDeclaredMethod("getLicenseKey");
 
